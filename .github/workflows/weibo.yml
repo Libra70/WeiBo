@@ -1,0 +1,46 @@
+name: 微博超话每日签到
+
+on:
+  workflow_dispatch:
+  schedule:
+    # UTC 00:10 = 北京时间 08:10
+    - cron: '10 0 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Check Cookie
+        env:
+          WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
+        run: |
+          if [ -z "$WEIBO_COOKIE" ]; then
+            echo "未配置 WEIBO_COOKIE"
+            exit 1
+          fi
+          echo "WEIBO_COOKIE 已配置"
+
+      - name: Run 微博超话签到
+        env:
+          WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
+          PYTHONUNBUFFERED: '1'
+        run: |
+          python wb.py
