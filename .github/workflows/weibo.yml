@@ -1,43 +1,62 @@
-name: 微博超话每日签到
-
-on:
-  workflow_dispatch:
-  schedule:
-    # UTC 00:10 = 北京时间 08:10
-    - cron: '10 0 * * *'
-
-permissions:
-  contents: read
-
-jobs:
-  sign:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests
-
-      - name: Check Cookie
+      - name: 诊断微博登录状态
         env:
           WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
         run: |
-          if [ -z "$WEIBO_COOKIE" ]; then
-            echo "未配置 WEIBO_COOKIE"
-            exit 1
-          fi
-          echo "WEIBO_COOKIE 已配置"
+          python - <<'PY'
+          import os
+          import re
+          import requests
 
+          cookie = os.environ.get("WEIBO_COOKIE", "").strip()
+
+          print("Cookie 是否存在:", bool(cookie))
+          print("Cookie 长度:", len(cookie))
+
+          names = []
+          for item in cookie.split(";"):
+              if "=" in item:
+                  names.append(item.split("=", 1)[0].strip())
+
+          print("包含 SUB:", "SUB" in names)
+          print("包含 SUBP:", "SUBP" in names)
+          print("包含 XSRF-TOKEN:", "XSRF-TOKEN" in names)
+
+          headers = {
+              "Cookie": cookie,
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+              "Referer": "https://weibo.com/"
+          }
+
+          url = "https://weibo.com/ajax/profile/topicContent"
+          params = {
+              "tabid": "231093_-_chaohua",
+              "page": 1
+          }
+
+          try:
+              r = requests.get(
+                  url,
+                  params=params,
+                  headers=headers,
+                  timeout=15,
+                  allow_redirects=False
+              )
+
+              print("HTTP 状态码:", r.status_code)
+              print("Content-Type:", r.headers.get("Content-Type"))
+              print("是否发生跳转:", r.is_redirect)
+
+              try:
+                  data = r.json()
+                  print("JSON ok:", data.get("ok"))
+                  print("JSON msg:", data.get("msg"))
+              except Exception:
+                  print("返回内容不是 JSON")
+                  print("返回长度:", len(r.text))
+
+          except Exception as e:
+              print("网络请求异常:", repr(e))
+          PY
       - name: Run 微博超话签到
         env:
           WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
