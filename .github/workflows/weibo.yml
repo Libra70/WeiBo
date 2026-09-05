@@ -1,65 +1,155 @@
-      - name: 诊断微博登录状态
+name: 微博超话每日签到
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # UTC 00:10 = 北京时间 08:10
+    - cron: '10 0 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  weibo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Check WEIBO_COOKIE
         env:
           WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
         run: |
+          if [ -z "$WEIBO_COOKIE" ]; then
+            echo "❌ 未配置 GitHub Secret: WEIBO_COOKIE"
+            exit 1
+          fi
+
+          echo "✅ WEIBO_COOKIE 已配置"
+          echo "Cookie 长度: ${#WEIBO_COOKIE}"
+
+      - name: Diagnose Weibo login
+        env:
+          WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
+          PYTHONUNBUFFERED: '1'
+        run: |
           python - <<'PY'
           import os
-          import re
           import requests
 
           cookie = os.environ.get("WEIBO_COOKIE", "").strip()
 
+          print("=" * 50)
+          print("微博登录状态诊断")
+          print("=" * 50)
+
           print("Cookie 是否存在:", bool(cookie))
           print("Cookie 长度:", len(cookie))
 
-          names = []
-          for item in cookie.split(";"):
-              if "=" in item:
-                  names.append(item.split("=", 1)[0].strip())
+          cookie_names = []
 
-          print("包含 SUB:", "SUB" in names)
-          print("包含 SUBP:", "SUBP" in names)
-          print("包含 XSRF-TOKEN:", "XSRF-TOKEN" in names)
+          for item in cookie.split(";"):
+              item = item.strip()
+
+              if "=" in item:
+                  name = item.split("=", 1)[0].strip()
+
+                  if name:
+                      cookie_names.append(name)
+
+          print("Cookie 项目数量:", len(cookie_names))
+          print("包含 SUB:", "SUB" in cookie_names)
+          print("包含 SUBP:", "SUBP" in cookie_names)
+          print("包含 XSRF-TOKEN:", "XSRF-TOKEN" in cookie_names)
 
           headers = {
               "Cookie": cookie,
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-              "Referer": "https://weibo.com/"
+              "User-Agent": (
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/120.0.0.0 Safari/537.36"
+              ),
+              "Accept": "application/json, text/plain, */*",
+              "Accept-Language": "zh-CN,zh;q=0.9",
+              "Referer": "https://weibo.com/",
+              "X-Requested-With": "XMLHttpRequest"
           }
 
           url = "https://weibo.com/ajax/profile/topicContent"
+
           params = {
               "tabid": "231093_-_chaohua",
               "page": 1
           }
 
           try:
-              r = requests.get(
+              response = requests.get(
                   url,
                   params=params,
                   headers=headers,
-                  timeout=15,
+                  timeout=20,
                   allow_redirects=False
               )
 
-              print("HTTP 状态码:", r.status_code)
-              print("Content-Type:", r.headers.get("Content-Type"))
-              print("是否发生跳转:", r.is_redirect)
+              print("-" * 50)
+              print("HTTP 状态码:", response.status_code)
+              print("Content-Type:", response.headers.get("Content-Type", ""))
+              print("是否跳转:", response.is_redirect)
+
+              location = response.headers.get("Location")
+
+              if location:
+                  # 不输出完整可能带参数的 URL
+                  print("服务器返回了跳转地址")
 
               try:
-                  data = r.json()
+                  data = response.json()
+
+                  print("返回 JSON: 是")
                   print("JSON ok:", data.get("ok"))
-                  print("JSON msg:", data.get("msg"))
+                  print("JSON msg:", data.get("msg", ""))
+
+                  api_data = data.get("data")
+
+                  if isinstance(api_data, dict):
+                      topic_list = api_data.get("list", [])
+
+                      if isinstance(topic_list, list):
+                          print("检测到超话数量:", len(topic_list))
+
               except Exception:
-                  print("返回内容不是 JSON")
-                  print("返回长度:", len(r.text))
+                  print("返回 JSON: 否")
+                  print("返回内容长度:", len(response.text))
+
+              print("=" * 50)
 
           except Exception as e:
-              print("网络请求异常:", repr(e))
+              print("❌ 网络请求异常:", repr(e))
+              raise
           PY
-      - name: Run 微博超话签到
+
+      - name: Run Weibo Task
         env:
           WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
           PYTHONUNBUFFERED: '1'
         run: |
+          echo "开始执行微博超话签到..."
           python wb.py
+
+      - name: Finished
+        if: always()
+        run: |
+          echo "微博任务运行结束"
