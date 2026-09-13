@@ -310,9 +310,12 @@ class WeiboChaohuaSignin:
             return
         try:
             refreshed = self.build_refreshed_cookie()
-            if refreshed == self.cookie:
+            force = os.environ.get('FORCE_WRITEBACK') == '1'
+            if refreshed == self.cookie and not force:
                 self.log('Cookie 无变化，无需写回')
                 return
+            if force and refreshed == self.cookie:
+                self.log('Cookie 无变化，已启用强制写回（验证 PAT 写权限）')
             ok, info = self.update_github_secret(refreshed)
             if ok:
                 self.log(f'✅ 已自动续期并写回最新 Cookie（长度 {len(refreshed)}）', 'SUCCESS')

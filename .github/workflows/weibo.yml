@@ -145,6 +145,7 @@ jobs:
         env:
           WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
           GH_PAT: ${{ secrets.GH_PAT }}
+          FORCE_WRITEBACK: '1'
           PYTHONUNBUFFERED: '1'
         run: |
           echo "开始执行微博超话签到..."
