@@ -19,6 +19,7 @@ import sys
 import json
 import time
 import random
+import base64
 import requests
 from urllib.parse import urlencode, quote
 
@@ -226,6 +227,100 @@ class WeiboChaohuaSignin:
         except Exception as e:
             return {'success': False, 'msg': f'签到失败: {str(e)}'}
     
+    def build_refreshed_cookie(self):
+        """合并本次运行中服务器换发的新 Cookie，返回更新后的 Cookie 字符串"""
+        # 以原始 Cookie 为基底，保留字段顺序
+        cookie_map = {}
+        order = []
+        for item in self.cookie.split(';'):
+            item = item.strip()
+            if '=' in item:
+                name, value = item.split('=', 1)
+                name = name.strip()
+                if name and name not in cookie_map:
+                    cookie_map[name] = value
+                    order.append(name)
+        
+        # 用 session 中 weibo/sina 域的 Cookie 覆盖或追加
+        for c in self.session.cookies:
+            domain = (c.domain or '').lower()
+            if not any(d in domain for d in ('weibo.com', 'sina.com.cn', 'sina.cn')):
+                continue
+            name = c.name
+            if not name or not c.value:
+                continue
+            if name not in cookie_map:
+                order.append(name)
+            cookie_map[name] = c.value
+        
+        return '; '.join(f'{k}={cookie_map[k]}' for k in order)
+    
+    def update_github_secret(self, new_cookie):
+        """通过 GitHub API 更新 WEIBO_COOKIE Secret（使用 libsodium 加密）"""
+        repo = os.environ.get('GITHUB_REPOSITORY')
+        token = os.environ.get('GH_PAT')
+        if not repo or not token:
+            return False, '缺少 GITHUB_REPOSITORY 或 GH_PAT'
+        
+        headers = {
+            'Authorization': f'token {token}',
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': 'weibo-signin-refresh'
+        }
+        api_base = f'https://api.github.com/repos/{repo}'
+        
+        try:
+            # 1. 获取仓库公钥
+            r = requests.get(f'{api_base}/actions/secrets/public-key', headers=headers, timeout=20)
+            if r.status_code != 200:
+                return False, f'获取公钥失败: HTTP {r.status_code}'
+            pub = r.json()
+            key = pub.get('key')
+            key_id = pub.get('key_id')
+            if not key or not key_id:
+                return False, '公钥响应缺少 key/key_id'
+            
+            # 2. 用 libsodium sealed box 加密
+            import nacl.public
+            from nacl.encoding import Base64Encoder
+            public_key = nacl.public.PublicKey(key.encode(), Base64Encoder)
+            sealed_box = nacl.public.SealedBox(public_key)
+            encrypted = sealed_box.encrypt(new_cookie.encode('utf-8'))
+            
+            # 3. 写回 Secret
+            r2 = requests.put(
+                f'{api_base}/actions/secrets/WEIBO_COOKIE',
+                headers=headers,
+                json={
+                    'encrypted_value': base64.b64encode(encrypted).decode('ascii'),
+                    'key_id': key_id
+                },
+                timeout=20
+            )
+            if r2.status_code in (201, 204):
+                return True, 'ok'
+            return False, f'写回失败: HTTP {r2.status_code} {r2.text[:200]}'
+        except Exception as e:
+            return False, f'异常: {str(e)}'
+    
+    def persist_refreshed_cookie(self):
+        """签到后，若 Cookie 有变化则自动写回 GitHub Secret 实现续期"""
+        if not os.environ.get('GH_PAT'):
+            self.log('未配置 GH_PAT，跳过 Cookie 自动续期写回', 'WARNING')
+            return
+        try:
+            refreshed = self.build_refreshed_cookie()
+            if refreshed == self.cookie:
+                self.log('Cookie 无变化，无需写回')
+                return
+            ok, info = self.update_github_secret(refreshed)
+            if ok:
+                self.log(f'✅ 已自动续期并写回最新 Cookie（长度 {len(refreshed)}）', 'SUCCESS')
+            else:
+                self.log(f'⚠️ Cookie 续期写回失败: {info}', 'WARNING')
+        except Exception as e:
+            self.log(f'⚠️ Cookie 续期写回异常: {str(e)}', 'WARNING')
+    
     def run(self):
         """单个账户执行签到"""
         user_info = self.get_user_info()
@@ -392,6 +487,10 @@ def main():
             
             # 执行签到
             result = signin.run()
+            
+            # 尝试自动续期回写 Cookie（无论签到成功与否都尝试）
+            signin.persist_refreshed_cookie()
+            
             all_results.append({
                 'account': i,
                 'result': result
@@ -480,4 +579,3 @@ if __name__ == "__main__":
         end_time = time.time()
         duration = int(end_time - start_time)
         print(f"⏱️  总耗时: {duration} 秒")
-
