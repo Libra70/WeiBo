@@ -29,28 +29,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests pynacl
 
-      - name: Check WEIBO_COOKIE
+      - name: Check WEIBO_COOKIES
         env:
-          WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
+          WEIBO_COOKIES: ${{ secrets.WEIBO_COOKIES }}
         run: |
-          if [ -z "$WEIBO_COOKIE" ]; then
-            echo "❌ 未配置 GitHub Secret: WEIBO_COOKIE"
+          if [ -z "$WEIBO_COOKIES" ]; then
+            echo "❌ 未配置 GitHub Secret: WEIBO_COOKIES"
             exit 1
           fi
 
-          echo "✅ WEIBO_COOKIE 已配置"
-          echo "Cookie 长度: ${#WEIBO_COOKIE}"
+          echo "✅ WEIBO_COOKIES 已配置"
+          echo "Cookie 长度: ${#WEIBO_COOKIES}"
 
       - name: Diagnose Weibo login
         env:
-          WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
+          WEIBO_COOKIES: ${{ secrets.WEIBO_COOKIES }}
           PYTHONUNBUFFERED: '1'
         run: |
           python - <<'PY'
           import os
           import requests
 
-          cookie = os.environ.get("WEIBO_COOKIE", "").strip()
+          cookie = os.environ.get("WEIBO_COOKIES", "").strip()
 
           print("=" * 50)
           print("微博登录状态诊断")
@@ -143,7 +143,7 @@ jobs:
 
       - name: Run Weibo Task
         env:
-          WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
+          WEIBO_COOKIES: ${{ secrets.WEIBO_COOKIES }}
           GH_PAT: ${{ secrets.GH_PAT }}
           PYTHONUNBUFFERED: '1'
         run: |
